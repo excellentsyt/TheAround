@@ -92,7 +92,7 @@ func handlerPost(w http.ResponseWriter, r *http.Request) {
 	id := uuid.New()
 	// Save to ES.
 	saveToES(&p, id)
-	fmt.Printf( "Post is saved to Index: %s\n", p.Message)
+	fmt.Printf("Post is saved to Index: %s\n", p.Message)
 
 	ctx := context.Background()
 	// you must update project name here
@@ -117,9 +117,6 @@ func handlerPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fmt.Printf("Post is saved to BigTable: %s\n", p.Message)
-
-
-
 }
 
 // Save a post to ElasticSearch
