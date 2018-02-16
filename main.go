@@ -17,7 +17,8 @@ import (
 	"github.com/auth0/go-jwt-middleware"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/mux"
-
+	"github.com/go-redis/redis"
+	"time"
 )
 
 const (
@@ -30,6 +31,9 @@ const (
 	// Needs to update this URL if you deploy it to cloud.
 	ES_URL = "http://35.196.180.245:9200"
 	BUCKET_NAME = "post-images-186110"
+	ENABLE_MEMCACHE = true
+	REDIS_URL       = "redis-14856.c1.us-central1-2.gce.cloud.redislabs.com:14856"
+
 )
 
 var mySigningKey = []byte("secret")
@@ -72,8 +76,7 @@ func main() {
                                   }
                            }
                     }
-             }
-             `
+             	}`
 		_, err := client.CreateIndex(INDEX).Body(mapping).Do()
 		if err != nil {
 			// Handle error
@@ -231,7 +234,27 @@ func handlerSearch(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Printf("Search received: %f %f %s\n", lat, lon, ran)
 
-	// Create a client
+	// Check cache first
+	key := r.URL.Query().Get("lat") + ":" + r.URL.Query().Get("lon") + ":" + ran
+	if ENABLE_MEMCACHE {
+		rs_client := redis.NewClient(&redis.Options{
+			Addr:     REDIS_URL,
+			Password: "", // no password set
+			DB:       0,  // use default DB
+		})
+
+		val, err := rs_client.Get(key).Result()
+		if err != nil {
+			fmt.Printf("Redis cannot find the key %s as %v.\n", key, err)
+		} else {
+			fmt.Printf("Redis find the key %s.\n", key)
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(val))
+			return
+		}
+	}
+
+	// Create a client - check database
 	client, err := elastic.NewClient(elastic.SetURL(ES_URL), elastic.SetSniff(false))
 	if err != nil {
 		panic(err)
@@ -269,7 +292,7 @@ func handlerSearch(w http.ResponseWriter, r *http.Request) {
 		// instance of
 		p := item.(Post) // p = (Post) item
 		fmt.Printf("Post by %s: %s at lat %v and lon %v\n", p.User, p.Message, p.Location.Lat, p.Location.Lon)
-		// TODO(vincent): Perform filtering based on keywords such as web spam etc.
+		// TODO: Perform filtering based on keywords such as web spam etc.
 		if !containsFilteredWords(&p.Message) {
 			ps = append(ps, p)
 		}
@@ -278,6 +301,22 @@ func handlerSearch(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		panic(err)
 		return
+	}
+
+	// Write to cache
+	if ENABLE_MEMCACHE {
+		rs_client := redis.NewClient(&redis.Options{
+			Addr:     REDIS_URL,
+			Password: "", // no password set
+			DB:       0,  // use default DB
+		})
+
+		// Set the cache expiration to be 30 seconds
+		err := rs_client.Set(key, string(js), time.Second*30).Err()
+		if err != nil {
+			fmt.Printf("Redis cannot save the key %s as %v.\n", key, err)
+		}
+
 	}
 
 	w.Header().Set("Content-Type", "application/json")
